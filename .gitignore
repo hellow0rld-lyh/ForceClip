@@ -1,0 +1,11 @@
+# 编译输出
+*.exe
+*.obj
+*.o
+*.log
+
+# 临时文件
+compile_err.txt
+compile.cmd
+test.c
+gcc_verbose.log
