@@ -4,6 +4,9 @@
 *.o
 *.log
 
+# 编辑器配置
+.vscode/
+
 # 临时文件
 compile_err.txt
 compile.cmd
