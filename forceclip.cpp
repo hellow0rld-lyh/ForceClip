@@ -452,13 +452,13 @@ static int check_for_update(UpdateInfo &info) {
                                      nullptr, nullptr, 0);
     if (!hSession) return -(int)GetLastError();
 
-    // 从 raw.githubusercontent.com 读 latest.json（走 CDN，不限速）
-    HINTERNET hConnect = WinHttpConnect(hSession, L"raw.githubusercontent.com",
+    // 从 jsDelivr CDN 读 latest.json（大陆可访问）
+    HINTERNET hConnect = WinHttpConnect(hSession, L"cdn.jsdelivr.net",
                                         INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!hConnect) { int err = (int)GetLastError(); WinHttpCloseHandle(hSession); return -err; }
 
     wchar_t url[256];
-    swprintf(url, 256, L"/%s/%s/main/latest.json", REPO_OWNER, REPO_NAME);
+    swprintf(url, 256, L"/gh/%s/%s@main/latest.json", REPO_OWNER, REPO_NAME);
 
     HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", url, nullptr,
                                             nullptr, nullptr, WINHTTP_FLAG_SECURE);
