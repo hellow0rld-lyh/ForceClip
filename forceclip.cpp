@@ -936,7 +936,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                     } else if (ret > 0) {
                         wsprintfW(buf, L"Check update failed\n\nHTTP %d\n\nPlease check your network connection.", ret);
                     } else if (ret == -2) {
-                        wcscpy(buf, L"Check update failed\n\nPARSE_ERROR\n\nPlease check your network connection.");
+                        wcscpy(buf, L"Check update failed\n\nServer returned unexpected data.\n\nPlease try again later.");
                     } else {
                         int we = -ret;
                         const wchar_t *why;
