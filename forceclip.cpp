@@ -36,7 +36,7 @@ constexpr DWORD KEY_WAIT_MS       = 10;
 constexpr DWORD KEY_TIMEOUT_MS    = 500;
 constexpr DWORD SETTLE_MS         = 50;
 
-const wchar_t* APP_VERSION = L"1.1.0";
+const wchar_t* APP_VERSION = L"2.0.0";
 const wchar_t* REPO_OWNER  = L"hellow0rld-lyh";
 const wchar_t* REPO_NAME   = L"ForceClip";
 
