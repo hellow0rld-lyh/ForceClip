@@ -445,46 +445,43 @@ struct UpdateInfo {
     bool         available = false;
 };
 
-// 返回: 0=成功, >0=HTTP 状态码, <0=WinHTTP 错误码
+// 返回: 0=成功, >0=HTTP 状态码, <0=WinHTTP 错误码, -2=JSON 解析失败
 static int check_for_update(UpdateInfo &info) {
-    int result = -1;
-
     HINTERNET hSession = WinHttpOpen(L"ForceClip/1.0",
                                      WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                      nullptr, nullptr, 0);
     if (!hSession) return -(int)GetLastError();
 
-    HINTERNET hConnect = WinHttpConnect(hSession, L"api.github.com",
+    // 从 raw.githubusercontent.com 读 latest.json（走 CDN，不限速）
+    HINTERNET hConnect = WinHttpConnect(hSession, L"raw.githubusercontent.com",
                                         INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!hConnect) { int e = (int)GetLastError(); WinHttpCloseHandle(hSession); return -e; }
+    if (!hConnect) { int err = (int)GetLastError(); WinHttpCloseHandle(hSession); return -err; }
 
-    wchar_t path[256];
-    swprintf(path, 256, L"/repos/%s/%s/releases/latest", REPO_OWNER, REPO_NAME);
+    wchar_t url[256];
+    swprintf(url, 256, L"/%s/%s/main/latest.json", REPO_OWNER, REPO_NAME);
 
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path, nullptr,
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", url, nullptr,
                                             nullptr, nullptr, WINHTTP_FLAG_SECURE);
-    if (!hRequest) { int e = (int)GetLastError(); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -e; }
+    if (!hRequest) { int err = (int)GetLastError(); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -err; }
 
-    WinHttpSetTimeouts(hRequest, 5000, 5000, 5000, 5000);
+    WinHttpSetTimeouts(hRequest, 8000, 8000, 8000, 8000);
 
     if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                             nullptr, 0, 0, 0)) {
-        int e = (int)GetLastError(); WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -e;
+        int err = (int)GetLastError(); WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -err;
     }
 
     if (!WinHttpReceiveResponse(hRequest, nullptr)) {
-        int e = (int)GetLastError(); WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -e;
+        int err = (int)GetLastError(); WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -err;
     }
 
-    // 读取 HTTP 状态码
     DWORD statusCode = 0;
-    DWORD size = sizeof(statusCode);
+    DWORD sz = sizeof(statusCode);
     WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                        nullptr, &statusCode, &size, nullptr);
+                        nullptr, &statusCode, &sz, nullptr);
 
-    // 读取响应体
     std::string response;
     char buf[4096];
     DWORD read = 0;
@@ -496,42 +493,31 @@ static int check_for_update(UpdateInfo &info) {
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
 
-    if (statusCode != 200) {
-        return (int)statusCode;  // HTTP 错误
-    }
+    if (statusCode != 200) return (int)statusCode;
 
-    // 解析 JSON
+    // JSON 格式: {"version":"v1.1.0","release_url":"...","notes":"..."}
     auto find_val = [&](const char *key) -> std::string {
-        auto p = response.find(key);
-        if (p == std::string::npos) return "";
-        p = response.find('"', p);
-        if (p == std::string::npos) return "";
-        auto e = response.find('"', p + 1);
-        if (e == std::string::npos) return "";
-        return response.substr(p + 1, e - p - 1);
+        auto pos = response.find(key);
+        if (pos == std::string::npos) return "";
+        pos = response.find('"', pos);
+        if (pos == std::string::npos) return "";
+        auto end = response.find('"', pos + 1);
+        if (end == std::string::npos) return "";
+        return response.substr(pos + 1, end - pos - 1);
     };
 
-    std::string tag = find_val("\"tag_name\"");
-    std::string url = find_val("\"html_url\"");
+    std::string ver = find_val("\"version\"");
+    std::string rel = find_val("\"release_url\"");
 
-    if (tag.empty() || url.empty()) return -2;  // 解析失败
+    if (ver.empty() || rel.empty()) return -2;
 
-    info.latestVersion.assign(tag.begin(), tag.end());
-    info.releaseUrl.assign(url.begin(), url.end());
+    info.latestVersion.assign(ver.begin(), ver.end());
+    info.releaseUrl.assign(rel.begin(), rel.end());
 
-    // 提取 release body
-    auto body = response.find("\"body\"");
-    if (body != std::string::npos) {
-        body = response.find('"', body + 6);
-        if (body != std::string::npos) {
-            auto end = response.find("\",", body + 1);
-            if (end != std::string::npos) {
-                info.releaseNotes.assign(
-                    response.begin() + body + 1,
-                    response.begin() + end);
-            }
-        }
-    }
+    // notes 可选
+    std::string notes = find_val("\"notes\"");
+    if (!notes.empty())
+        info.releaseNotes.assign(notes.begin(), notes.end());
 
     // 比较版本号
     std::wstring cur = APP_VERSION;
@@ -540,23 +526,23 @@ static int check_for_update(UpdateInfo &info) {
     if (lat[0] == L'v' || lat[0] == L'V') lat.erase(lat.begin());
 
     auto parse = [](const std::wstring &s) -> int { return _wtoi(s.c_str()); };
-    auto dot1 = cur.find(L'.');
-    auto dot2 = cur.rfind(L'.');
-    int curMaj = parse(cur.substr(0, dot1));
-    int curMin = parse(dot1 != std::wstring::npos ? cur.substr(dot1+1, dot2-dot1-1) : L"0");
-    int curPat = parse(dot2 != std::wstring::npos ? cur.substr(dot2+1) : L"0");
+    auto d1 = cur.find(L'.');
+    auto d2 = cur.rfind(L'.');
+    int curMaj = parse(cur.substr(0, d1));
+    int curMin = parse(d1 != std::wstring::npos ? cur.substr(d1+1, d2-d1-1) : L"0");
+    int curPat = parse(d2 != std::wstring::npos ? cur.substr(d2+1) : L"0");
 
-    dot1 = lat.find(L'.');
-    dot2 = lat.rfind(L'.');
-    int latMaj = parse(lat.substr(0, dot1));
-    int latMin = parse(dot1 != std::wstring::npos ? lat.substr(dot1+1, dot2-dot1-1) : L"0");
-    int latPat = parse(dot2 != std::wstring::npos ? lat.substr(dot2+1) : L"0");
+    d1 = lat.find(L'.');
+    d2 = lat.rfind(L'.');
+    int latMaj = parse(lat.substr(0, d1));
+    int latMin = parse(d1 != std::wstring::npos ? lat.substr(d1+1, d2-d1-1) : L"0");
+    int latPat = parse(d2 != std::wstring::npos ? lat.substr(d2+1) : L"0");
 
     info.available = (latMaj > curMaj) ||
                      (latMaj == curMaj && latMin > curMin) ||
                      (latMaj == curMaj && latMin == curMin && latPat > curPat);
 
-    return 0;  // 成功
+    return 0;
 }
 
 static void show_update_dialog(HWND hwnd, const UpdateInfo &info) {
@@ -945,8 +931,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 } else {
                     wchar_t buf[512];
                     if (ret == 404) {
-                        wcscpy(buf, L"Check update failed\n\nNo release found on GitHub.\n\n"
-                               L"Publish the first release and try again.");
+                        wcscpy(buf, L"Check update failed\n\nNo release data found (404).\n\n"
+                               L"Publish a release on GitHub first.");
                     } else if (ret > 0) {
                         wsprintfW(buf, L"Check update failed\n\nHTTP %d\n\nPlease check your network connection.", ret);
                     } else if (ret == -2) {

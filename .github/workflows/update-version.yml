@@ -1,0 +1,28 @@
+name: Update latest.json on Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate latest.json
+        run: |
+          echo '${{ toJSON(github.event.release) }}' \
+            | jq '{version: .tag_name, release_url: .html_url, notes: .body}' \
+            > latest.json
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add latest.json
+          git diff --cached --quiet || git commit -m "chore: update latest.json for ${{ github.event.release.tag_name }}"
+          git push
