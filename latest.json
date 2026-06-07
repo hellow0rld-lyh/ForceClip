@@ -1,0 +1,5 @@
+{
+  "version": "v2.0.2",
+  "release_url": "https://github.com/hellow0rld-lyh/ForceClip/releases/tag/v2.0.2",
+  "notes": "### v2.0.2\n\n- 修复：GitHub Actions 自动生成 latest.json（checkout main 避免分离 HEAD）\n- 改进：更新检测改用 jsDelivr CDN，大陆访问更稳定"
+}
