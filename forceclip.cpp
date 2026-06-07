@@ -1,5 +1,5 @@
 /*
- * Clipboard Typer v2.0 — 完整 GUI 版
+ * ForceClip v2.0 — 完整 GUI 版
  * ====================================================
  * 功能： Ctrl+Alt+Insert 读取剪贴板 → 在当前光标处打字
  * 退出： Ctrl+Alt+Q
@@ -175,7 +175,7 @@ static UINT string_to_vk(const std::wstring &name) {
 // ═════════════════════════════════════════════════════════════════════
 //  注册表配置持久化
 // ═════════════════════════════════════════════════════════════════════
-static const wchar_t* REG_KEY = L"Software\\ClipboardTyper";
+static const wchar_t* REG_KEY = L"Software\\ForceClip";
 
 static void save_config(HotkeyBinding paste, HotkeyBinding exit, bool autoStart) {
     HKEY hKey;
@@ -232,10 +232,10 @@ static void set_auto_start(bool enable) {
     if (enable) {
         wchar_t path[MAX_PATH];
         GetModuleFileNameW(nullptr, path, MAX_PATH);
-        RegSetValueExW(hKey, L"ClipboardTyper", 0, REG_SZ,
+        RegSetValueExW(hKey, L"ForceClip", 0, REG_SZ,
                        (BYTE*)path, (DWORD)((wcslen(path) + 1) * sizeof(wchar_t)));
     } else {
-        RegDeleteValueW(hKey, L"ClipboardTyper");
+        RegDeleteValueW(hKey, L"ForceClip");
     }
     RegCloseKey(hKey);
 }
@@ -248,7 +248,7 @@ static bool is_auto_start() {
         return false;
 
     DWORD type, size = 0;
-    LONG ret = RegQueryValueExW(hKey, L"ClipboardTyper", nullptr, &type, nullptr, &size);
+    LONG ret = RegQueryValueExW(hKey, L"ForceClip", nullptr, &type, nullptr, &size);
     RegCloseKey(hKey);
     return (ret == ERROR_SUCCESS);
 }
@@ -366,7 +366,7 @@ static void create_tray_icon(HWND hwnd) {
     g_nid.uID    = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
-    wcscpy_s(g_nid.szTip, L"Clipboard Typer");
+    wcscpy_s(g_nid.szTip, L"ForceClip");
 
     // 创建一个简单图标（16x16 纯色块）
     HDC hdc = GetDC(nullptr);
@@ -643,7 +643,7 @@ static void create_settings_window(HINSTANCE hInst) {
     g_ss.editAutoStart = is_auto_start();
     g_ss.capturing    = false;
 
-    const wchar_t CLASS_NAME[] = L"ClipboardTyperSettingsClass";
+    const wchar_t CLASS_NAME[] = L"ForceClipSettingsClass";
 
     WNDCLASS wc = {};
     wc.lpfnWndProc   = settings_proc;
@@ -658,7 +658,7 @@ static void create_settings_window(HINSTANCE hInst) {
     int y = (GetSystemMetrics(SM_CYSCREEN) - H) / 2;
 
     g_ss.hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME,
-        CLASS_NAME, L"Clipboard Typer - 设置",
+        CLASS_NAME, L"ForceClip - 设置",
         WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
         x, y, W, H, g_hwnd, nullptr, hInst, nullptr);
 
@@ -791,20 +791,20 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     // ═══════════════════════════════════════════════════════════════
     //  单例检测 — 防止重复运行
     // ═══════════════════════════════════════════════════════════════
-    const wchar_t *MUTEX_NAME = L"Local\\ClipboardTyper_SingletonMutex";
+    const wchar_t *MUTEX_NAME = L"Local\\ForceClip_SingletonMutex";
     HANDLE hMutex = CreateMutexW(nullptr, FALSE, MUTEX_NAME);
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         CloseHandle(hMutex);
         hMutex = nullptr;
 
-        HWND hExisting = FindWindowW(L"ClipboardTyperClass", nullptr);
+        HWND hExisting = FindWindowW(L"ForceClipClass", nullptr);
 
         int choice = MessageBoxW(nullptr,
-            L"Clipboard Typer 已在后台运行。\n\n"
+            L"ForceClip 已在后台运行。\n\n"
             L"  [是]   显示已运行程序的设置窗口\n"
             L"  [否]   关闭旧程序并启动新实例\n"
             L"  [取消] 退出",
-            L"Clipboard Typer - 检测到重复运行",
+            L"ForceClip - 检测到重复运行",
             MB_YESNOCANCEL | MB_ICONQUESTION | MB_DEFBUTTON3);
 
         if (choice == IDYES) {
@@ -853,14 +853,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     if (g_exitHK.vk  == 0) { g_exitHK.modifiers  = MOD_CONTROL | MOD_ALT; g_exitHK.vk  = 'Q'; }
 
     // 注册主窗口类
-    constexpr auto CLASS_NAME = L"ClipboardTyperClass";
+    constexpr auto CLASS_NAME = L"ForceClipClass";
     WNDCLASS wc = {};
     wc.lpfnWndProc = window_proc;
     wc.hInstance   = hInst;
     wc.lpszClassName = CLASS_NAME;
     if (!RegisterClass(&wc)) return 1;
 
-    g_hwnd = CreateWindowExW(0, CLASS_NAME, L"Clipboard Typer",
+    g_hwnd = CreateWindowExW(0, CLASS_NAME, L"ForceClip",
                              WS_OVERLAPPEDWINDOW,
                              0, 0, 0, 0, nullptr, nullptr, hInst, nullptr);
     if (!g_hwnd) return 1;
