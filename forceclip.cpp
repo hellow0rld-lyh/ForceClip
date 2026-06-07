@@ -491,24 +491,22 @@ static int check_for_update(UpdateInfo &info) {
                                      nullptr, nullptr, 0);
     if (!hSession) return -(int)GetLastError();
 
-    wchar_t path1[256], path2[256];
-    swprintf(path1, 256, L"/gh/%s/%s@main/latest.json", REPO_OWNER, REPO_NAME);
-    swprintf(path2, 256, L"/%s/%s/main/latest.json", REPO_OWNER, REPO_NAME);
+    wchar_t pathRaw[256], pathJsd[256];
+    swprintf(pathRaw, 256, L"/%s/%s/main/latest.json", REPO_OWNER, REPO_NAME);
+    swprintf(pathJsd, 256, L"/gh/%s/%s@main/latest.json", REPO_OWNER, REPO_NAME);
 
-    // 依次尝试多个 CDN
-    struct { const wchar_t *host; const wchar_t *path; } mirrors[] = {
-        { L"cdn.jsdelivr.net",      path1 },
-        { L"gcore.jsdelivr.net",    path1 },
-        { L"raw.githubusercontent.com", path2 },
+    struct { const wchar_t *host; const wchar_t *path; } hosts[] = {
+        { L"raw.githubusercontent.com", pathRaw },
+        { L"cdn.jsdelivr.net",         pathJsd },
     };
 
     std::string response;
     int status = -1;
 
-    for (auto &m : mirrors) {
+    for (auto &h : hosts) {
         response.clear();
-        status = try_fetch(hSession, m.host, m.path, response);
-        if (status == 200) break;  // 成功
+        status = try_fetch(hSession, h.host, h.path, response);
+        if (status == 200) break;
     }
 
     WinHttpCloseHandle(hSession);
