@@ -15,7 +15,7 @@
 
 ## 下载
 
-从 [Releases](https://github.com/hellow0rld-lyh/clipboard-typer/releases) 下载 `ForceClip.exe`，双击运行即可。
+从 [Releases](https://github.com/hellow0rld-lyh/autoInput/releases) 下载 `ForceClip.exe`，双击运行即可。
 
 ## 编译
 
