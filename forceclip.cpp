@@ -38,7 +38,7 @@ constexpr DWORD SETTLE_MS         = 50;
 
 const wchar_t* APP_VERSION = L"1.1.0";
 const wchar_t* REPO_OWNER  = L"hellow0rld-lyh";
-const wchar_t* REPO_NAME   = L"autoInput";
+const wchar_t* REPO_NAME   = L"ForceClip";
 
 // 控件 ID
 enum CtrlId {
@@ -445,103 +445,118 @@ struct UpdateInfo {
     bool         available = false;
 };
 
-static bool check_for_update(UpdateInfo &info) {
+// 返回: 0=成功, >0=HTTP 状态码, <0=WinHTTP 错误码
+static int check_for_update(UpdateInfo &info) {
+    int result = -1;
+
     HINTERNET hSession = WinHttpOpen(L"ForceClip/1.0",
                                      WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                      nullptr, nullptr, 0);
-    if (!hSession) return false;
+    if (!hSession) return -(int)GetLastError();
 
     HINTERNET hConnect = WinHttpConnect(hSession, L"api.github.com",
                                         INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!hConnect) { WinHttpCloseHandle(hSession); return false; }
+    if (!hConnect) { int e = (int)GetLastError(); WinHttpCloseHandle(hSession); return -e; }
 
     wchar_t path[256];
     swprintf(path, 256, L"/repos/%s/%s/releases/latest", REPO_OWNER, REPO_NAME);
 
     HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path, nullptr,
                                             nullptr, nullptr, WINHTTP_FLAG_SECURE);
-    if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return false; }
+    if (!hRequest) { int e = (int)GetLastError(); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -e; }
 
     WinHttpSetTimeouts(hRequest, 5000, 5000, 5000, 5000);
 
-    bool ok = false;
-    if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                           nullptr, 0, 0, 0) &&
-        WinHttpReceiveResponse(hRequest, nullptr)) {
+    if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                            nullptr, 0, 0, 0)) {
+        int e = (int)GetLastError(); WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -e;
+    }
 
-        std::string response;
-        char buf[4096];
-        DWORD read = 0;
-        while (WinHttpReadData(hRequest, buf, sizeof(buf), &read) && read > 0) {
-            response.append(buf, read);
-        }
+    if (!WinHttpReceiveResponse(hRequest, nullptr)) {
+        int e = (int)GetLastError(); WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -e;
+    }
 
-        // 解析 JSON — 简单字符串搜索
-        auto find_val = [&](const char *key) -> std::string {
-            auto p = response.find(key);
-            if (p == std::string::npos) return "";
-            p = response.find('"', p);
-            if (p == std::string::npos) return "";
-            auto e = response.find('"', p + 1);
-            if (e == std::string::npos) return "";
-            return response.substr(p + 1, e - p - 1);
-        };
+    // 读取 HTTP 状态码
+    DWORD statusCode = 0;
+    DWORD size = sizeof(statusCode);
+    WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        nullptr, &statusCode, &size, nullptr);
 
-        std::string tag   = find_val("\"tag_name\"");
-        std::string url   = find_val("\"html_url\"");
-
-        if (!tag.empty() && !url.empty()) {
-            info.latestVersion.assign(tag.begin(), tag.end());
-            info.releaseUrl.assign(url.begin(), url.end());
-
-            // 提取 release body（截取到下一个顶层 key 之前）
-            auto body = response.find("\"body\"");
-            if (body != std::string::npos) {
-                body = response.find('"', body + 6);
-                if (body != std::string::npos) {
-                    auto end = response.find("\",", body + 1);
-                    if (end != std::string::npos) {
-                        info.releaseNotes.assign(
-                            response.begin() + body + 1,
-                            response.begin() + end);
-                    }
-                }
-            }
-
-            // 比较版本号
-            std::wstring cur = APP_VERSION;
-            if (cur[0] == L'v' || cur[0] == L'V') cur.erase(cur.begin());
-            std::wstring lat = info.latestVersion;
-            if (lat[0] == L'v' || lat[0] == L'V') lat.erase(lat.begin());
-
-            // 简单比较：逐段比较 major.minor.patch
-            auto parse = [](const std::wstring &s) -> int {
-                return _wtoi(s.c_str());
-            };
-            auto dot1 = cur.find(L'.');
-            auto dot2 = cur.rfind(L'.');
-            int curMaj = parse(cur.substr(0, dot1));
-            int curMin = parse(dot1 != std::wstring::npos ? cur.substr(dot1+1, dot2-dot1-1) : L"0");
-            int curPat = parse(dot2 != std::wstring::npos ? cur.substr(dot2+1) : L"0");
-
-            dot1 = lat.find(L'.');
-            dot2 = lat.rfind(L'.');
-            int latMaj = parse(lat.substr(0, dot1));
-            int latMin = parse(dot1 != std::wstring::npos ? lat.substr(dot1+1, dot2-dot1-1) : L"0");
-            int latPat = parse(dot2 != std::wstring::npos ? lat.substr(dot2+1) : L"0");
-
-            info.available = (latMaj > curMaj) ||
-                             (latMaj == curMaj && latMin > curMin) ||
-                             (latMaj == curMaj && latMin == curMin && latPat > curPat);
-
-            ok = true;
-        }
+    // 读取响应体
+    std::string response;
+    char buf[4096];
+    DWORD read = 0;
+    while (WinHttpReadData(hRequest, buf, sizeof(buf), &read) && read > 0) {
+        response.append(buf, read);
     }
 
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
-    return ok;
+
+    if (statusCode != 200) {
+        return (int)statusCode;  // HTTP 错误
+    }
+
+    // 解析 JSON
+    auto find_val = [&](const char *key) -> std::string {
+        auto p = response.find(key);
+        if (p == std::string::npos) return "";
+        p = response.find('"', p);
+        if (p == std::string::npos) return "";
+        auto e = response.find('"', p + 1);
+        if (e == std::string::npos) return "";
+        return response.substr(p + 1, e - p - 1);
+    };
+
+    std::string tag = find_val("\"tag_name\"");
+    std::string url = find_val("\"html_url\"");
+
+    if (tag.empty() || url.empty()) return -2;  // 解析失败
+
+    info.latestVersion.assign(tag.begin(), tag.end());
+    info.releaseUrl.assign(url.begin(), url.end());
+
+    // 提取 release body
+    auto body = response.find("\"body\"");
+    if (body != std::string::npos) {
+        body = response.find('"', body + 6);
+        if (body != std::string::npos) {
+            auto end = response.find("\",", body + 1);
+            if (end != std::string::npos) {
+                info.releaseNotes.assign(
+                    response.begin() + body + 1,
+                    response.begin() + end);
+            }
+        }
+    }
+
+    // 比较版本号
+    std::wstring cur = APP_VERSION;
+    if (cur[0] == L'v' || cur[0] == L'V') cur.erase(cur.begin());
+    std::wstring lat = info.latestVersion;
+    if (lat[0] == L'v' || lat[0] == L'V') lat.erase(lat.begin());
+
+    auto parse = [](const std::wstring &s) -> int { return _wtoi(s.c_str()); };
+    auto dot1 = cur.find(L'.');
+    auto dot2 = cur.rfind(L'.');
+    int curMaj = parse(cur.substr(0, dot1));
+    int curMin = parse(dot1 != std::wstring::npos ? cur.substr(dot1+1, dot2-dot1-1) : L"0");
+    int curPat = parse(dot2 != std::wstring::npos ? cur.substr(dot2+1) : L"0");
+
+    dot1 = lat.find(L'.');
+    dot2 = lat.rfind(L'.');
+    int latMaj = parse(lat.substr(0, dot1));
+    int latMin = parse(dot1 != std::wstring::npos ? lat.substr(dot1+1, dot2-dot1-1) : L"0");
+    int latPat = parse(dot2 != std::wstring::npos ? lat.substr(dot2+1) : L"0");
+
+    info.available = (latMaj > curMaj) ||
+                     (latMaj == curMaj && latMin > curMin) ||
+                     (latMaj == curMaj && latMin == curMin && latPat > curPat);
+
+    return 0;  // 成功
 }
 
 static void show_update_dialog(HWND hwnd, const UpdateInfo &info) {
@@ -924,27 +939,35 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             }
             if (wParam == 1001) {  // 检查更新
                 UpdateInfo info;
-                DWORD errCode = 0;
-                if (check_for_update(info)) {
+                int ret = check_for_update(info);
+                if (ret == 0) {
                     show_update_dialog(hwnd, info);
                 } else {
-                    errCode = GetLastError();
-                    const wchar_t *errMsg;
-                    switch (errCode) {
-                        case 12002: errMsg = L"连接超时 (TIME_OUT)"; break;
-                        case 12007: errMsg = L"无法解析服务器地址 (NAME_NOT_RESOLVED)"; break;
-                        case 12029: errMsg = L"无法连接到服务器 (CONNECTION_REFUSED)"; break;
-                        case 12030: errMsg = L"连接被断开 (CONNECTION_ABORTED)"; break;
-                        case 12175: errMsg = L"SSL 安全连接失败 (SECURE_FAILURE)"; break;
-                        default:   errMsg = L""; break;
-                    }
-                    wchar_t buf[256];
-                    if (errMsg[0]) {
-                        swprintf(buf, 256, L"检查更新失败\n\n%s\n\n请检查网络连接后重试。", errMsg);
+                    wchar_t buf[512];
+                    if (ret == 404) {
+                        wcscpy(buf, L"Check update failed\n\nNo release found on GitHub.\n\n"
+                               L"Publish the first release and try again.");
+                    } else if (ret > 0) {
+                        wsprintfW(buf, L"Check update failed\n\nHTTP %d\n\nPlease check your network connection.", ret);
+                    } else if (ret == -2) {
+                        wcscpy(buf, L"Check update failed\n\nPARSE_ERROR\n\nPlease check your network connection.");
                     } else {
-                        swprintf(buf, 256, L"检查更新失败 (错误码: %u)\n\n请检查网络连接后重试。", errCode);
+                        int we = -ret;
+                        const wchar_t *why;
+                        switch (we) {
+                            case 12002: why = L"TIME_OUT"; break;
+                            case 12007: why = L"DNS_RESOLVE_FAILED"; break;
+                            case 12029: why = L"CONNECTION_REFUSED"; break;
+                            case 12030: why = L"CONNECTION_ABORTED"; break;
+                            case 12175: why = L"SSL_HANDSHAKE_FAILED"; break;
+                            default:    why = L""; break;
+                        }
+                        if (why[0])
+                            wsprintfW(buf, L"Check update failed\n\n%s (%d)\n\nPlease check your network connection.", why, we);
+                        else
+                            wsprintfW(buf, L"Check update failed\n\nError code %d\n\nPlease check your network connection.", we);
                     }
-                    MessageBoxW(hwnd, buf, L"检查更新", MB_OK | MB_ICONWARNING);
+                    MessageBoxW(hwnd, buf, L"Check Update", MB_OK | MB_ICONWARNING);
                 }
                 return 0;
             }
@@ -1054,7 +1077,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     // 启动时检测更新
     if (g_checkUpdate) {
         UpdateInfo info;
-        if (check_for_update(info) && info.available) {
+        if (check_for_update(info) == 0 && info.available) {
             show_update_dialog(g_hwnd, info);
         }
     }
