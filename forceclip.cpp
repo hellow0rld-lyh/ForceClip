@@ -611,6 +611,8 @@ static void update_settings_display() {
 
     SendDlgItemMessageW(g_ss.hwnd, IDC_AUTOSTART, BM_SETCHECK,
                         g_ss.editAutoStart ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendDlgItemMessageW(g_ss.hwnd, IDC_CHECKUPDATE, BM_SETCHECK,
+                        g_checkUpdate ? BST_CHECKED : BST_UNCHECKED, 0);
 
     g_ss.updating = false;
 }
@@ -922,11 +924,16 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             }
             if (wParam == 1001) {  // 检查更新
                 UpdateInfo info;
+                DWORD errCode = 0;
                 if (check_for_update(info)) {
                     show_update_dialog(hwnd, info);
                 } else {
-                    MessageBoxW(hwnd, L"检查更新失败\n请确认网络连接正常。",
-                                L"检查更新", MB_OK | MB_ICONWARNING);
+                    errCode = GetLastError();
+                    wchar_t buf[256];
+                    swprintf(buf, 256,
+                        L"检查更新失败 (错误码: %u)\n请确认网络连接正常，代理已开启。",
+                        errCode);
+                    MessageBoxW(hwnd, buf, L"检查更新", MB_OK | MB_ICONWARNING);
                 }
                 return 0;
             }
