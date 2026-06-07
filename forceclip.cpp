@@ -929,10 +929,21 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                     show_update_dialog(hwnd, info);
                 } else {
                     errCode = GetLastError();
+                    const wchar_t *errMsg;
+                    switch (errCode) {
+                        case 12002: errMsg = L"连接超时 (TIME_OUT)"; break;
+                        case 12007: errMsg = L"无法解析服务器地址 (NAME_NOT_RESOLVED)"; break;
+                        case 12029: errMsg = L"无法连接到服务器 (CONNECTION_REFUSED)"; break;
+                        case 12030: errMsg = L"连接被断开 (CONNECTION_ABORTED)"; break;
+                        case 12175: errMsg = L"SSL 安全连接失败 (SECURE_FAILURE)"; break;
+                        default:   errMsg = L""; break;
+                    }
                     wchar_t buf[256];
-                    swprintf(buf, 256,
-                        L"检查更新失败 (错误码: %u)\n请确认网络连接正常，代理已开启。",
-                        errCode);
+                    if (errMsg[0]) {
+                        swprintf(buf, 256, L"检查更新失败\n\n%s\n\n请检查网络连接后重试。", errMsg);
+                    } else {
+                        swprintf(buf, 256, L"检查更新失败 (错误码: %u)\n\n请检查网络连接后重试。", errCode);
+                    }
                     MessageBoxW(hwnd, buf, L"检查更新", MB_OK | MB_ICONWARNING);
                 }
                 return 0;
