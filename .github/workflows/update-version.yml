@@ -14,10 +14,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Generate latest.json
+        env:
+          RELEASE_DATA: ${{ toJSON(github.event.release) }}
         run: |
-          echo '${{ toJSON(github.event.release) }}' \
-            | jq '{version: .tag_name, release_url: .html_url, notes: .body}' \
-            > latest.json
+          echo "$RELEASE_DATA" | jq '{version: .tag_name, release_url: .html_url, notes: .body}' > latest.json
 
       - name: Commit and push
         run: |
