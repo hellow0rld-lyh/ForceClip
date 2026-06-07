@@ -788,6 +788,63 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     g_hInst = hInst;
 
+    // ═══════════════════════════════════════════════════════════════
+    //  单例检测 — 防止重复运行
+    // ═══════════════════════════════════════════════════════════════
+    const wchar_t *MUTEX_NAME = L"Local\\ClipboardTyper_SingletonMutex";
+    HANDLE hMutex = CreateMutexW(nullptr, FALSE, MUTEX_NAME);
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(hMutex);
+        hMutex = nullptr;
+
+        HWND hExisting = FindWindowW(L"ClipboardTyperClass", nullptr);
+
+        int choice = MessageBoxW(nullptr,
+            L"Clipboard Typer 已在后台运行。\n\n"
+            L"  [是]   显示已运行程序的设置窗口\n"
+            L"  [否]   关闭旧程序并启动新实例\n"
+            L"  [取消] 退出",
+            L"Clipboard Typer - 检测到重复运行",
+            MB_YESNOCANCEL | MB_ICONQUESTION | MB_DEFBUTTON3);
+
+        if (choice == IDYES) {
+            if (hExisting) {
+                PostMessageW(hExisting, WM_COMMAND, 1000, 0);
+                SetForegroundWindow(hExisting);
+            }
+            return 0;
+        }
+
+        if (choice == IDNO) {
+            // 关闭旧进程
+            DWORD pid = 0;
+            if (hExisting) {
+                GetWindowThreadProcessId(hExisting, &pid);
+                PostMessageW(hExisting, WM_CLOSE, 0, 0);   // 请求优雅退出
+                if (pid) {
+                    HANDLE hProc = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, pid);
+                    if (hProc) {
+                        // 等旧进程自己退出，最多 2 秒
+                        if (WaitForSingleObject(hProc, 2000) == WAIT_TIMEOUT) {
+                            TerminateProcess(hProc, 0);    // 超时则强制终止
+                        }
+                        CloseHandle(hProc);
+                    }
+                }
+            }
+            // 重新获取互斥锁
+            hMutex = CreateMutexW(nullptr, FALSE, MUTEX_NAME);
+            if (GetLastError() == ERROR_ALREADY_EXISTS) {
+                MessageBoxW(nullptr, L"无法关闭旧进程，请手动结束后再试。", L"错误", MB_ICONERROR);
+                if (hMutex) { CloseHandle(hMutex); hMutex = nullptr; }
+                return 1;
+            }
+        } else {
+            // 取消
+            return 0;
+        }
+    }
+
     // 载入配置
     load_config(g_pasteHK, g_exitHK, g_ss.editAutoStart);
 
@@ -831,5 +888,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     UnregisterHotKey(g_hwnd, EXIT_HKID);
     DestroyWindow(g_hwnd);
 
+    if (hMutex) CloseHandle(hMutex);
     return 0;
 }
