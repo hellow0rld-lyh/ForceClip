@@ -653,7 +653,7 @@ static void create_settings_window(HINSTANCE hInst) {
     wc.lpszClassName = CLASS_NAME;
     RegisterClass(&wc);
 
-    int W = 460, H = 300;
+    int W = 560, H = 300;
     int x = (GetSystemMetrics(SM_CXSCREEN) - W) / 2;
     int y = (GetSystemMetrics(SM_CYSCREEN) - H) / 2;
 
@@ -701,7 +701,7 @@ static void create_settings_window(HINSTANCE hInst) {
                         WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
                         x, y, w, h, g_ss.hwnd, nullptr, hInst, nullptr);
     };
-    group(L"粘贴热键", 10, 5, 435, 85);
+    group(L"粘贴热键", 10, 5, 540, 85);
 
     label(L"当前:", 20, 25, 35, 20, 0);
     auto pasteDisp = edit(55, 22, 230, 22, IDC_PASTE_DISPLAY, true);
@@ -714,10 +714,10 @@ static void create_settings_window(HINSTANCE hInst) {
     checkbox(L"Win",  220, 50, 50, 22, IDC_PASTE_WIN);
     label(L"按键:", 275, 52, 35, 20, 0);
     edit(310, 50, 55, 22, IDC_PASTE_KEY, false);
-    label(L"(手动填: A / F1 / Insert...)", 370, 52, 170, 20, 0);
+    label(L"(手动填: A / F1 / Insert...)", 370, 52, 190, 20, 0);
 
     // ── 退出热键 ──
-    group(L"退出热键", 10, 95, 435, 85);
+    group(L"退出热键", 10, 95, 540, 85);
 
     label(L"当前:", 20, 115, 35, 20, 0);
     auto exitDisp = edit(55, 112, 230, 22, IDC_EXIT_DISPLAY, true);
@@ -730,7 +730,7 @@ static void create_settings_window(HINSTANCE hInst) {
     checkbox(L"Win",  220, 140, 50, 22, IDC_EXIT_WIN);
     label(L"按键:", 275, 142, 35, 20, 0);
     edit(310, 140, 55, 22, IDC_EXIT_KEY, false);
-    label(L"(手动填: Q / F3...)", 370, 142, 170, 20, 0);
+    label(L"(手动填: Q / F3...)", 370, 142, 190, 20, 0);
 
     // ── 开机自启动 ──
     checkbox(L"开机自动启动", 18, 195, 150, 25, IDC_AUTOSTART);
