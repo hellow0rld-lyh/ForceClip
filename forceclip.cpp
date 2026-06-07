@@ -15,6 +15,7 @@
 #include <windows.h>
 #include <shellapi.h>   // Shell_NotifyIcon, SHGetFolderPathW
 #include <shlobj.h>     // CSIDL_APPDATA
+#include <winhttp.h>    // GitHub API 检测更新
 
 #include <string>
 #include <vector>
@@ -34,6 +35,10 @@ constexpr DWORD MAX_CHARS         = 50000;
 constexpr DWORD KEY_WAIT_MS       = 10;
 constexpr DWORD KEY_TIMEOUT_MS    = 500;
 constexpr DWORD SETTLE_MS         = 50;
+
+const wchar_t* APP_VERSION = L"1.1.0";
+const wchar_t* REPO_OWNER  = L"hellow0rld-lyh";
+const wchar_t* REPO_NAME   = L"autoInput";
 
 // 控件 ID
 enum CtrlId {
@@ -55,6 +60,7 @@ enum CtrlId {
 
     IDC_AUTOSTART      = 300,
     IDC_APPLY          = 301,
+    IDC_CHECKUPDATE    = 302,
 };
 
 // ═════════════════════════════════════════════════════════════════════
@@ -176,6 +182,7 @@ static UINT string_to_vk(const std::wstring &name) {
 //  注册表配置持久化
 // ═════════════════════════════════════════════════════════════════════
 static const wchar_t* REG_KEY = L"Software\\ForceClip";
+static bool g_checkUpdate = true;  // 启动时检测更新
 
 static void save_config(HotkeyBinding paste, HotkeyBinding exit, bool autoStart) {
     HKEY hKey;
@@ -191,6 +198,9 @@ static void save_config(HotkeyBinding paste, HotkeyBinding exit, bool autoStart)
                        (BYTE*)&exit.vk, sizeof(DWORD));
         DWORD val = autoStart ? 1 : 0;
         RegSetValueExW(hKey, L"AutoStart", 0, REG_DWORD,
+                       (BYTE*)&val, sizeof(DWORD));
+        val = g_checkUpdate ? 1 : 0;
+        RegSetValueExW(hKey, L"CheckUpdate", 0, REG_DWORD,
                        (BYTE*)&val, sizeof(DWORD));
         RegCloseKey(hKey);
     }
@@ -215,6 +225,10 @@ static void load_config(HotkeyBinding &paste, HotkeyBinding &exit, bool &autoSta
     DWORD val = 0;
     RegQueryValueExW(hKey, L"AutoStart", nullptr, &type, (BYTE*)&val, &size);
     autoStart = (val != 0);
+
+    size = sizeof(DWORD); val = 0;
+    RegQueryValueExW(hKey, L"CheckUpdate", nullptr, &type, (BYTE*)&val, &size);
+    g_checkUpdate = (val != 0);
 
     RegCloseKey(hKey);
 }
@@ -396,6 +410,7 @@ static void create_tray_icon(HWND hwnd) {
 static void show_tray_menu(HWND hwnd) {
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, 100, L"设置 (S)");
+    AppendMenuW(menu, MF_STRING, 102, L"检查更新 (U)");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 101, L"退出 (X)");
 
@@ -415,6 +430,137 @@ static void show_tray_menu(HWND hwnd) {
         }
     } else if (cmd == 101) {
         PostQuitMessage(0);
+    } else if (cmd == 102) {
+        SendMessageW(hwnd, WM_COMMAND, 1001, 0);  // 检查更新
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//  检测更新
+// ═════════════════════════════════════════════════════════════════════
+struct UpdateInfo {
+    std::wstring latestVersion;
+    std::wstring releaseUrl;
+    std::wstring releaseNotes;
+    bool         available = false;
+};
+
+static bool check_for_update(UpdateInfo &info) {
+    HINTERNET hSession = WinHttpOpen(L"ForceClip/1.0",
+                                     WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                     nullptr, nullptr, 0);
+    if (!hSession) return false;
+
+    HINTERNET hConnect = WinHttpConnect(hSession, L"api.github.com",
+                                        INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!hConnect) { WinHttpCloseHandle(hSession); return false; }
+
+    wchar_t path[256];
+    swprintf(path, 256, L"/repos/%s/%s/releases/latest", REPO_OWNER, REPO_NAME);
+
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path, nullptr,
+                                            nullptr, nullptr, WINHTTP_FLAG_SECURE);
+    if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return false; }
+
+    WinHttpSetTimeouts(hRequest, 5000, 5000, 5000, 5000);
+
+    bool ok = false;
+    if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                           nullptr, 0, 0, 0) &&
+        WinHttpReceiveResponse(hRequest, nullptr)) {
+
+        std::string response;
+        char buf[4096];
+        DWORD read = 0;
+        while (WinHttpReadData(hRequest, buf, sizeof(buf), &read) && read > 0) {
+            response.append(buf, read);
+        }
+
+        // 解析 JSON — 简单字符串搜索
+        auto find_val = [&](const char *key) -> std::string {
+            auto p = response.find(key);
+            if (p == std::string::npos) return "";
+            p = response.find('"', p);
+            if (p == std::string::npos) return "";
+            auto e = response.find('"', p + 1);
+            if (e == std::string::npos) return "";
+            return response.substr(p + 1, e - p - 1);
+        };
+
+        std::string tag   = find_val("\"tag_name\"");
+        std::string url   = find_val("\"html_url\"");
+
+        if (!tag.empty() && !url.empty()) {
+            info.latestVersion.assign(tag.begin(), tag.end());
+            info.releaseUrl.assign(url.begin(), url.end());
+
+            // 提取 release body（截取到下一个顶层 key 之前）
+            auto body = response.find("\"body\"");
+            if (body != std::string::npos) {
+                body = response.find('"', body + 6);
+                if (body != std::string::npos) {
+                    auto end = response.find("\",", body + 1);
+                    if (end != std::string::npos) {
+                        info.releaseNotes.assign(
+                            response.begin() + body + 1,
+                            response.begin() + end);
+                    }
+                }
+            }
+
+            // 比较版本号
+            std::wstring cur = APP_VERSION;
+            if (cur[0] == L'v' || cur[0] == L'V') cur.erase(cur.begin());
+            std::wstring lat = info.latestVersion;
+            if (lat[0] == L'v' || lat[0] == L'V') lat.erase(lat.begin());
+
+            // 简单比较：逐段比较 major.minor.patch
+            auto parse = [](const std::wstring &s) -> int {
+                return _wtoi(s.c_str());
+            };
+            auto dot1 = cur.find(L'.');
+            auto dot2 = cur.rfind(L'.');
+            int curMaj = parse(cur.substr(0, dot1));
+            int curMin = parse(dot1 != std::wstring::npos ? cur.substr(dot1+1, dot2-dot1-1) : L"0");
+            int curPat = parse(dot2 != std::wstring::npos ? cur.substr(dot2+1) : L"0");
+
+            dot1 = lat.find(L'.');
+            dot2 = lat.rfind(L'.');
+            int latMaj = parse(lat.substr(0, dot1));
+            int latMin = parse(dot1 != std::wstring::npos ? lat.substr(dot1+1, dot2-dot1-1) : L"0");
+            int latPat = parse(dot2 != std::wstring::npos ? lat.substr(dot2+1) : L"0");
+
+            info.available = (latMaj > curMaj) ||
+                             (latMaj == curMaj && latMin > curMin) ||
+                             (latMaj == curMaj && latMin == curMin && latPat > curPat);
+
+            ok = true;
+        }
+    }
+
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return ok;
+}
+
+static void show_update_dialog(HWND hwnd, const UpdateInfo &info) {
+    if (!info.available) {
+        std::wstring msg = L"当前版本: " + std::wstring(APP_VERSION) + L"\n已是最新版本。";
+        MessageBoxW(hwnd, msg.c_str(), L"检查更新", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    std::wstring msg = L"发现新版本！\n\n"
+        L"当前版本: " + std::wstring(APP_VERSION) + L"\n"
+        L"最新版本: " + info.latestVersion + L"\n\n"
+        L"更新内容:\n" + info.releaseNotes;
+
+    int ret = MessageBoxW(hwnd, msg.c_str(), L"发现更新",
+                          MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1);
+    if (ret == IDYES) {
+        ShellExecuteW(nullptr, L"open", info.releaseUrl.c_str(),
+                      nullptr, nullptr, SW_SHOWNORMAL);
     }
 }
 
@@ -490,6 +636,7 @@ static void save_settings() {
     read_manual_to(g_ss.editPaste,  IDC_PASTE_CTRL, IDC_PASTE_ALT, IDC_PASTE_SHIFT, IDC_PASTE_WIN, IDC_PASTE_KEY);
     read_manual_to(g_ss.editExit,   IDC_EXIT_CTRL,  IDC_EXIT_ALT,  IDC_EXIT_SHIFT,  IDC_EXIT_WIN,  IDC_EXIT_KEY);
     g_ss.editAutoStart = (SendDlgItemMessageW(g_ss.hwnd, IDC_AUTOSTART, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    g_checkUpdate = (SendDlgItemMessageW(g_ss.hwnd, IDC_CHECKUPDATE, BM_GETCHECK, 0, 0) == BST_CHECKED);
 
     // 更新全局
     g_pasteHK = g_ss.editPaste;
@@ -734,6 +881,7 @@ static void create_settings_window(HINSTANCE hInst) {
 
     // ── 开机自启动 ──
     checkbox(L"开机自动启动", 18, 195, 150, 25, IDC_AUTOSTART);
+    checkbox(L"启动时检查更新", 175, 195, 150, 25, IDC_CHECKUPDATE);
 
     // ── 底部按钮 ──
     button(L"确定",  280, 235, 65, 27, IDOK);
@@ -770,6 +918,16 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         case WM_COMMAND:
             if (wParam == 1000) {  // 打开设置
                 create_settings_window(g_hInst);
+                return 0;
+            }
+            if (wParam == 1001) {  // 检查更新
+                UpdateInfo info;
+                if (check_for_update(info)) {
+                    show_update_dialog(hwnd, info);
+                } else {
+                    MessageBoxW(hwnd, L"检查更新失败\n请确认网络连接正常。",
+                                L"检查更新", MB_OK | MB_ICONWARNING);
+                }
                 return 0;
             }
             break;
@@ -874,6 +1032,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     // 如果没设置自启动但注册表有写入，同步一下
     if (g_ss.editAutoStart != is_auto_start())
         set_auto_start(g_ss.editAutoStart);
+
+    // 启动时检测更新
+    if (g_checkUpdate) {
+        UpdateInfo info;
+        if (check_for_update(info) && info.available) {
+            show_update_dialog(g_hwnd, info);
+        }
+    }
 
     // 消息循环
     MSG msg = {};
