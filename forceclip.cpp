@@ -445,6 +445,45 @@ struct UpdateInfo {
     bool         available = false;
 };
 
+// 尝试从一个 URL 获取 latest.json，返回 HTTP 状态码或负错误码
+static int try_fetch(HINTERNET hSession, const wchar_t *host,
+                     const wchar_t *path, std::string &out) {
+    HINTERNET hConnect = WinHttpConnect(hSession, host,
+                                        INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!hConnect) return -(int)GetLastError();
+
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path, nullptr,
+                                            nullptr, nullptr, WINHTTP_FLAG_SECURE);
+    if (!hRequest) {
+        int e = (int)GetLastError();
+        WinHttpCloseHandle(hConnect);
+        return -e;
+    }
+
+    WinHttpSetTimeouts(hRequest, 6000, 6000, 6000, 6000);
+
+    int ret = -1;
+    if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                           nullptr, 0, 0, 0) &&
+        WinHttpReceiveResponse(hRequest, nullptr)) {
+        DWORD code = 0, sz = sizeof(code);
+        WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                            nullptr, &code, &sz, nullptr);
+        ret = (int)code;
+
+        char buf[4096];
+        DWORD read = 0;
+        while (WinHttpReadData(hRequest, buf, sizeof(buf), &read) && read > 0)
+            out.append(buf, read);
+    } else {
+        ret = -(int)GetLastError();
+    }
+
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    return ret;
+}
+
 // 返回: 0=成功, >0=HTTP 状态码, <0=WinHTTP 错误码, -2=JSON 解析失败
 static int check_for_update(UpdateInfo &info) {
     HINTERNET hSession = WinHttpOpen(L"ForceClip/1.0",
@@ -452,48 +491,28 @@ static int check_for_update(UpdateInfo &info) {
                                      nullptr, nullptr, 0);
     if (!hSession) return -(int)GetLastError();
 
-    // 从 jsDelivr CDN 读 latest.json（大陆可访问）
-    HINTERNET hConnect = WinHttpConnect(hSession, L"cdn.jsdelivr.net",
-                                        INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!hConnect) { int err = (int)GetLastError(); WinHttpCloseHandle(hSession); return -err; }
+    wchar_t path1[256], path2[256];
+    swprintf(path1, 256, L"/gh/%s/%s@main/latest.json", REPO_OWNER, REPO_NAME);
+    swprintf(path2, 256, L"/%s/%s/main/latest.json", REPO_OWNER, REPO_NAME);
 
-    wchar_t url[256];
-    swprintf(url, 256, L"/gh/%s/%s@main/latest.json", REPO_OWNER, REPO_NAME);
-
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", url, nullptr,
-                                            nullptr, nullptr, WINHTTP_FLAG_SECURE);
-    if (!hRequest) { int err = (int)GetLastError(); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -err; }
-
-    WinHttpSetTimeouts(hRequest, 8000, 8000, 8000, 8000);
-
-    if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                            nullptr, 0, 0, 0)) {
-        int err = (int)GetLastError(); WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -err;
-    }
-
-    if (!WinHttpReceiveResponse(hRequest, nullptr)) {
-        int err = (int)GetLastError(); WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return -err;
-    }
-
-    DWORD statusCode = 0;
-    DWORD sz = sizeof(statusCode);
-    WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                        nullptr, &statusCode, &sz, nullptr);
+    // 依次尝试多个 CDN
+    struct { const wchar_t *host; const wchar_t *path; } mirrors[] = {
+        { L"cdn.jsdelivr.net",      path1 },
+        { L"gcore.jsdelivr.net",    path1 },
+        { L"raw.githubusercontent.com", path2 },
+    };
 
     std::string response;
-    char buf[4096];
-    DWORD read = 0;
-    while (WinHttpReadData(hRequest, buf, sizeof(buf), &read) && read > 0) {
-        response.append(buf, read);
+    int status = -1;
+
+    for (auto &m : mirrors) {
+        response.clear();
+        status = try_fetch(hSession, m.host, m.path, response);
+        if (status == 200) break;  // 成功
     }
 
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
-
-    if (statusCode != 200) return (int)statusCode;
+    if (status != 200) return status;
 
     // JSON 格式: {"version":"v1.1.0","release_url":"...","notes":"..."}
     auto find_val = [&](const char *key) -> std::string {
